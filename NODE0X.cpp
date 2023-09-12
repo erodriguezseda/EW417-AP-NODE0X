@@ -69,6 +69,9 @@ int main()
     float currTime;
     int estimate = 0;
     float estimateYaw;
+    int delayCase;
+    int bufferSize;
+    float yawControl;
 
     pc.baud(115200);
     pc.printf("Starting Program... \n\r");
@@ -149,8 +152,58 @@ int main()
                 i++;
             }
         }
+        
+        i = 0;
+        while (i < 1) {
+            if(can3.read(&canRx_msg) == CAN_OK) {
+                if(canRx_msg.id == 1) {
+                    for (int k = 0; k < 8; k++) {
+                        msg_read_char[k] = (char)canRx_msg.data[k];
+                    }
+                    int checkFlag;
+                    sscanf(msg_read_char, "%d", &checkFlag);
+                    if (checkFlag == 2222){
+                        pc.printf("Delay info... \n\r");
+                    } else {
+                        i--;
+                    }
+                }
+                i++;
+            }
+        }
+        i = 0;
+        while (i < 1) {
+            if(can3.read(&canRx_msg) == CAN_OK) {
+                if(canRx_msg.id == 1) {
+                    for (int k = 0; k < 8; k++) {
+                        msg_read_char[k] = (char)canRx_msg.data[k];
+                    }
+                    sscanf(msg_read_char, "%d", &delayCase);
+                    pc.printf("Delay Case %d\n\r", delayCase);
+                }
+                i++;
+            }
+        }
+        i = 0;
+        while (i < 1) {
+            if(can3.read(&canRx_msg) == CAN_OK) {
+                if(canRx_msg.id == 1) {
+                    for (int k = 0; k < 8; k++) {
+                        msg_read_char[k] = (char)canRx_msg.data[k];
+                    }
+                    int checkFlag;
+                    sscanf(msg_read_char, "%d", &bufferSize);
+                    pc.printf("Delay %.1f, Buffer Size %d\n\r", (float)bufferSize/10, bufferSize);
+                }
+                i++;
+            }
+        }
+        thread_sleep_for(300);
 
-        thread_sleep_for(250);
+
+        //NEED to work on control part...
+
+
         int controlSignal = initServo[myID-1];
         servoOut1 = controlSignal;
         thread_sleep_for(3000);
@@ -171,11 +224,28 @@ int main()
                 //some wait 13, 11, 9, 7, 5 seconds
             }
         }
+        while (t.read() < 1.5) {
+            if(can3.read(&canRx_msg) == CAN_OK){
+                pc.printf("Cleaning buffer...\n\r");
+            }
+        }
+
+        float delayedAngles[5][bufferSize];
+        for (int i = 0; i < 5; i++){
+            for (int j = 0; j < bufferSize; j++){
+                if (estimate == 0){
+                    delayedAngles[i][j] = yaw;
+                } else {
+                    delayedAngles[i][j] =180.0/2000*controlSignal - 45;
+                }
+            }
+        }
         //t.stop();
         t.reset();
         //t.start();
         int count = 0;
-        while(t.read() < 2*duration) {
+        while(t.read() < 2.0*duration) {
+            //led = !led;
             count++;
             oldYaw = yaw;
             bno.get_angles();
@@ -190,18 +260,20 @@ int main()
                 currAngles[myID-1] = estimateYaw;
                 sprintf(msg_send, "%.1f\r\n", estimateYaw);
             }
+            
             for(int i=0; i<8; i++) {
                 canTx_msg.data[i] = msg_send[i];
             }
             canTx_msg.id = myID;
-            //currAngles[myID-1] = yaw;
+
+            
             currTime = t.read();
             int writeTimer = currTime + 0.003*(6-myID);
             while (t.read() < currTime + 0.09) {
                 if (t.read() >= writeTimer) {
                     can3.write(&canTx_msg);
                     writeTimer = writeTimer + 0.003*(6-myID);
-                    }
+                }
                 if(can3.read(&canRx_msg) == CAN_OK) { //if message is available, read into msg
                     //pc.printf("CAN RX id=%d data: %s", canRx_msg.id, canRx_msg.data);
                     for (int i = 0; i < 8; i++) {
@@ -209,18 +281,30 @@ int main()
                     }
                     sscanf(msg_read_char, "%f", &currAngles[canRx_msg.id-1]);
                     //thread_sleep_for(15-2*myID);  //allows them to use the CAN at different times
-                                                  //some wait 13, 11, 9, 7, 5 seconds
+                    //some wait 13, 11, 9, 7, 5 seconds
                 }
             }
+
+            if (delayCase == 1) {
+                yawControl = delayedAngles[myID-1][0];
+            } else {
+                yawControl = currAngles[myID-1];
+            }
+
             for (int i = 0; i < 5; i++) {
                 if (adjMatrix[myID-1][i] > 0) {
-                    controlSignal = controlSignal + 0.5*adjMatrix[myID-1][i]*(int)(currAngles[i]-currAngles[myID-1]);
+                    controlSignal = controlSignal + 0.5*adjMatrix[myID-1][i]*(int)(delayedAngles[i][0]-yawControl);
                 }
+            }
+            for (int i = 0; i < 5; i++){
+                for (int j = 0; j < bufferSize-1; j++){
+                    delayedAngles[i][j] = delayedAngles[i][j+1];
+                }
+                delayedAngles[i][bufferSize-1] = currAngles[i];
             }
             if (controlSignal > 2500) {
                 controlSignal = 2500;
-            }
-            else if (controlSignal < 500) {
+            } else if (controlSignal < 500) {
                 controlSignal = 500;
             }
             servoOut1 = controlSignal;
@@ -236,5 +320,6 @@ int main()
         t.stop();
         t.reset();
         servoOut1 = 0;
+        //led = 0;
     }
 }//main
