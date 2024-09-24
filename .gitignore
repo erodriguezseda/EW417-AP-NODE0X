@@ -1,4 +1,9 @@
-.build
-.mbed
-projectfiles
-*.py*
+BUILD
+?mbed
+compile_commands?json
+?clangd
+?cache
+mcp2515
+mbed-os
+ServoOut
+BNO055
